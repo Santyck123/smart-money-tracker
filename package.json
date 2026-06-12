@@ -1,0 +1,38 @@
+{
+  "name": "smart-money-tracker",
+  "version": "0.1.0",
+  "description": "Detecta tokens pumpeados y rankea wallets smart money que compraron antes del pump",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "scan": "tsx src/cli.ts scan",
+    "analyze": "tsx src/cli.ts analyze",
+    "export": "tsx src/cli.ts export",
+    "pipeline": "tsx src/cli.ts pipeline",
+    "panel": "tsx src/server/index.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "bottleneck": "^2.19.5",
+    "commander": "^13.1.0",
+    "csv-stringify": "^6.5.2",
+    "dotenv": "^16.4.7",
+    "express": "^5.2.1",
+    "pino": "^9.6.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.13.0",
+    "pino-pretty": "^13.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

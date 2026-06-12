@@ -1,0 +1,126 @@
+# Prompt para Claude Code — Smart Money Wallet Tracker
+
+> Copiá todo lo que está debajo de la línea y pegalo en Claude Code como primer mensaje.
+
+---
+
+## Contexto y objetivo
+
+Quiero construir desde cero un sistema de análisis on-chain llamado **smart-money-tracker**. Su objetivo: detectar tokens que tuvieron un "pump" reciente (subida fuerte de precio/volumen), reconstruir el historial de compras de esos tokens, identificar las wallets que compraron **antes** del pump, scorearlas y exportar un CSV rankeado con las mejores wallets ("smart money").
+
+Soy desarrollador con experiencia en Node.js, APIs REST y automatización (n8n, Bitrix24). Quiero código profesional, mantenible y bien tipado.
+
+## Stack obligatorio
+
+- **Node.js 20+ con TypeScript** (strict mode)
+- **Sin framework web por ahora**: es un CLI/batch job. Usar `commander` para la CLI.
+- Gestión de rate limits con `bottleneck` o `p-queue`
+- `zod` para validar respuestas de APIs externas
+- `csv-stringify` para el export
+- Variables de entorno con `dotenv`, archivo `.env.example` incluido
+- Logging con `pino`
+- Tests con `vitest` para la lógica de scoring (no hace falta testear las llamadas HTTP, mockealas)
+
+## Fuentes de datos (todas en free tier)
+
+1. **DexScreener API** (sin API key): detección de pumps.
+   - Endpoint de pares por chain, filtrar por `priceChange.h24` y volumen.
+2. **Etherscan API V2** (una sola key, multichain vía `chainid`): Ethereum (`chainid=1`) y BNB Chain (`chainid=56`).
+   - Endpoints: `account.tokentx` (transfers ERC-20 de un contrato), `account.txlist`.
+   - Límite: 5 req/s, 100k req/día compartidos entre chains. Implementar limiter global.
+3. **Helius** (Solana): Enhanced Transactions API + RPC `getSignaturesForAddress` / `getTransaction` para reconstruir swaps de un mint.
+   - Respetar rate limits del free tier con backoff exponencial.
+
+Claves esperadas en `.env`: `ETHERSCAN_API_KEY`, `HELIUS_API_KEY`.
+
+## Arquitectura propuesta
+
+```
+src/
+  cli.ts                  # entrypoint commander: comandos scan, analyze, export
+  config.ts               # carga y validación de env con zod
+  chains/
+    types.ts              # interfaces comunes: TokenTransfer, Swap, ChainAdapter
+    evm.adapter.ts        # Etherscan V2 (ETH + BSC)
+    solana.adapter.ts     # Helius
+  pumps/
+    detector.ts           # DexScreener: encuentra tokens pumpeados según criterios
+    types.ts              # PumpEvent { token, chain, pumpStartTs, priceChange, volume }
+  analysis/
+    prebuyers.ts          # filtra compradores anteriores a pumpStartTs
+    scoring.ts            # lógica de score (ver abajo) — PURA, sin I/O, testeable
+    filters.ts            # heurísticas anti-ruido (ver abajo)
+  storage/
+    db.ts                 # SQLite con better-sqlite3: tokens, transfers, wallets, scores
+  export/
+    csv.ts                # genera el CSV final rankeado
+```
+
+Patrón clave: **ChainAdapter** como interfaz común para que EVM y Solana expongan los mismos métodos (`getTokenTransfers(token, fromTs, toTs)`), y toda la lógica de análisis sea chain-agnostic.
+
+## Definición de "pump"
+
+Configurable en `config.ts`, defaults:
+- `priceChange24h >= 200%`
+- `volume24h >= 100_000 USD`
+- `liquidity >= 20_000 USD` (descartar pools ilíquidos/honeypots)
+- Edad del par entre 1 y 30 días
+
+El `pumpStartTs` se estima como el inicio de la vela donde el precio rompió +50% sostenido. Si DexScreener no da granularidad suficiente, usar una aproximación documentada (ej: 24h antes del snapshot) y dejarlo como TODO mejorable.
+
+## Lógica de scoring (corazón del sistema)
+
+Para cada wallet que compró antes de `pumpStartTs`, calcular score 0-100 ponderado:
+
+1. **Timing (30%)**: cuánto antes del pump compró. Más temprano = mejor, pero comprar en el mismo bloque del deploy es sospechoso de sniper/insider → penalizar compras en los primeros N minutos post-deploy.
+2. **Tamaño relativo (25%)**: % del supply circulante comprado. Normalizar con log para que whales no dominen.
+3. **Acumulación (20%)**: múltiples compras espaciadas en el tiempo antes del pump > una sola compra. Medir cantidad de compras y dispersión temporal.
+4. **Recurrencia (25%)**: **la señal más importante**: cantidad de tokens pumpeados distintos (de la corrida actual + histórico en SQLite) donde esta wallet aparece como pre-buyer. 1 aparición = ruido; 3+ = smart money probable.
+
+## Filtros anti-ruido (en `filters.ts`)
+
+Descartar o flaggear wallets que:
+- Compraron en el mismo bloque/slot del deploy del token (snipers)
+- Recibieron fondos directamente desde la wallet del deployer (insiders) — chequear primera transacción entrante
+- Wallet "fresca": creada < 7 días antes de la compra y sin historial en otros tokens
+- Contratos (no EOA) en EVM: chequear con `eth_getCode` o el flag de Etherscan
+
+Estos flags van como columnas en el CSV (`is_sniper`, `is_insider_suspect`, `is_fresh_wallet`) en vez de eliminarlos silenciosamente.
+
+## CSV de salida
+
+`output/smart-wallets-YYYY-MM-DD.csv` con columnas:
+
+`wallet, chain, score, tokens_hit_count, avg_buy_timing_hours_before_pump, total_usd_bought_prepump, avg_supply_pct, accumulation_buys_avg, is_sniper, is_insider_suspect, is_fresh_wallet, tokens_list, explorer_url`
+
+Ordenado por `score` descendente.
+
+## CLI esperada
+
+```bash
+npm run scan -- --chains eth,bsc,sol --max-tokens 30   # detecta pumps y los guarda en SQLite
+npm run analyze                                          # reconstruye transfers y calcula scores
+npm run export                                           # genera el CSV
+npm run pipeline -- --chains eth,bsc,sol                 # los 3 pasos juntos
+```
+
+## Forma de trabajo
+
+1. **Antes de escribir código**, mostrame un plan de implementación por fases y esperá mi OK.
+2. Fase 1: scaffolding + config + detector de pumps con DexScreener (probalo con datos reales).
+3. Fase 2: adapter EVM (Etherscan V2) con rate limiting + persistencia SQLite.
+4. Fase 3: adapter Solana (Helius).
+5. Fase 4: scoring + filtros + tests de la lógica de scoring.
+6. Fase 5: export CSV + comando pipeline + README con setup.
+7. Al final de cada fase, corré el código contra APIs reales (con mis keys del .env), mostrame el output y esperá mi confirmación antes de seguir.
+8. Manejo de errores robusto: las APIs van a fallar, devolver 429, o datos incompletos. Nunca abortar todo el batch por un token que falla; loggear y continuar.
+9. Documentá en el README los límites conocidos del free tier y dónde están los TODOs de mejora (ej: estimación de pumpStartTs, PnL histórico de wallets).
+
+## Fuera de alcance (NO construir todavía)
+
+- Ejecución de trades / conexión a exchanges
+- Frontend / dashboard
+- Notificaciones (Telegram/WhatsApp) — quedan para v2
+- Tracking en tiempo real con webhooks — v2
+
+Empezá mostrándome el plan de la Fase 1.
