@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   accumulationScore,
   DEFAULT_WEIGHTS,
+  findFleetBots,
   isBotTokenStats,
   recurrenceScore,
   scoreWallet,
@@ -102,24 +103,70 @@ describe("isBotTokenStats", () => {
     dispersionHours: 2, maxBuysPerSecond: 1, firstBuyClusterSize: 1,
   };
 
-  it("flaggea ≥3 compras en el mismo segundo", () => {
-    expect(isBotTokenStats({ ...base, maxBuysPerSecond: 3 })).toBe(true);
-    expect(isBotTokenStats({ ...base, maxBuysPerSecond: 2 })).toBe(false);
+  it("flaggea ≥2 compras en el mismo segundo", () => {
+    expect(isBotTokenStats({ ...base, maxBuysPerSecond: 2 })).toBe(true);
+    expect(isBotTokenStats({ ...base, maxBuysPerSecond: 1 })).toBe(false);
   });
 
-  it("flaggea ráfagas: 3+ compras con dispersión casi nula", () => {
+  it("flaggea ráfagas: 3+ compras con dispersión < 90s", () => {
     expect(isBotTokenStats({ ...base, buyCount: 4, dispersionHours: 0.001 })).toBe(true);
     expect(isBotTokenStats({ ...base, buyCount: 4, dispersionHours: 1 })).toBe(false);
     expect(isBotTokenStats({ ...base, buyCount: 2, dispersionHours: 0 })).toBe(false);
   });
 
-  it("flaggea bundles: primera compra en el mismo segundo que 8+ wallets", () => {
-    expect(isBotTokenStats({ ...base, firstBuyClusterSize: 8 })).toBe(true);
-    expect(isBotTokenStats({ ...base, firstBuyClusterSize: 7 })).toBe(false);
+  it("flaggea bundles: primera compra en el mismo segundo que 4+ wallets", () => {
+    expect(isBotTokenStats({ ...base, firstBuyClusterSize: 4 })).toBe(true);
+    expect(isBotTokenStats({ ...base, firstBuyClusterSize: 3 })).toBe(false);
+  });
+
+  it("flaggea ≥15 compras (market maker / grid bot)", () => {
+    expect(isBotTokenStats({ ...base, buyCount: 15, dispersionHours: 10 })).toBe(true);
   });
 
   it("sin datos de bot (undefined) no flaggea", () => {
     expect(isBotTokenStats({ hoursBeforePump: 10, minutesAfterDeploy: 60, buyCount: 1, dispersionHours: 0 })).toBe(false);
+  });
+});
+
+describe("findFleetBots", () => {
+  it("marca wallets que debutan en el mismo segundo exacto en 2+ tokens", () => {
+    const rows = [
+      // token 1, segundo 1000: bundle de 3 wallets (A, B, C)
+      { wallet: "A", pumpEventId: 1, firstBuyTs: 1000 },
+      { wallet: "B", pumpEventId: 1, firstBuyTs: 1000 },
+      { wallet: "C", pumpEventId: 1, firstBuyTs: 1000 },
+      // token 2, segundo 5000: bundle de 3 wallets (A, B, D)
+      { wallet: "A", pumpEventId: 2, firstBuyTs: 5000 },
+      { wallet: "B", pumpEventId: 2, firstBuyTs: 5000 },
+      { wallet: "D", pumpEventId: 2, firstBuyTs: 5000 },
+    ];
+    const fleet = findFleetBots(rows);
+    expect(fleet.has("A")).toBe(true); // bundled en token 1 y 2
+    expect(fleet.has("B")).toBe(true);
+    expect(fleet.has("C")).toBe(false); // solo 1 token
+    expect(fleet.has("D")).toBe(false); // solo 1 token
+  });
+
+  it("no marca segundos poco concurridos (<3 wallets)", () => {
+    const rows = [
+      { wallet: "A", pumpEventId: 1, firstBuyTs: 1000 },
+      { wallet: "B", pumpEventId: 1, firstBuyTs: 1000 },
+      { wallet: "A", pumpEventId: 2, firstBuyTs: 5000 },
+      { wallet: "B", pumpEventId: 2, firstBuyTs: 5000 },
+    ];
+    expect(findFleetBots(rows).size).toBe(0);
+  });
+
+  it("una wallet de la flota arrastra su score a bot aunque sus stats parezcan humanas", () => {
+    const humanLooking: WalletTokenStats = {
+      hoursBeforePump: 30, minutesAfterDeploy: 200, buyCount: 2,
+      dispersionHours: 8, supplyPctBought: 0.01, maxBuysPerSecond: 1, firstBuyClusterSize: 1,
+    };
+    const clean = scoreWallet({ perToken: [humanLooking] });
+    const fleeted = scoreWallet({ perToken: [humanLooking], fleetBot: true });
+    expect(clean.isBotSuspect).toBe(false);
+    expect(fleeted.isBotSuspect).toBe(true);
+    expect(fleeted.score).toBeLessThan(clean.score);
   });
 });
 
@@ -168,7 +215,7 @@ describe("scoreWallet", () => {
     expect(result.tokensHitCount).toBe(2);
   });
 
-  it("penaliza ×0.25 a wallets con señales de bot en la mayoría de sus tokens", () => {
+  it("penaliza ×0.15 a wallets con señales de bot en la mayoría de sus tokens", () => {
     const human: WalletTokenStats = {
       hoursBeforePump: 20, minutesAfterDeploy: 120, buyCount: 3, dispersionHours: 5,
       supplyPctBought: 0.005, maxBuysPerSecond: 1, firstBuyClusterSize: 2,
@@ -178,7 +225,7 @@ describe("scoreWallet", () => {
     const botScore = scoreWallet({ perToken: [bot] });
     expect(humanScore.isBotSuspect).toBe(false);
     expect(botScore.isBotSuspect).toBe(true);
-    expect(botScore.score).toBeCloseTo(humanScore.score * 0.25, 0);
+    expect(botScore.score).toBeCloseTo(humanScore.score * 0.15, 0);
   });
 
   it("una sola aparición bot entre varias humanas no penaliza", () => {

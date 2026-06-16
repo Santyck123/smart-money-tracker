@@ -48,7 +48,12 @@ Criterios de pump configurables por env (defaults): `PUMP_MIN_PRICE_CHANGE_24H=2
 
 Flags anti-ruido (columnas del CSV, no eliminan wallets): `is_sniper` (compró ≤5 min post-deploy), `is_insider_suspect` (primer fondeo desde el deployer), `is_fresh_wallet` (wallet <7 días con ≤10 txs), `is_bot_suspect`. Los flags que requieren API solo se resuelven para el top 100.
 
-**Detección de bots** (`is_bot_suspect`): una aparición es bot-like si tiene ≥3 compras en el mismo segundo, ≥3 compras con dispersión casi nula (ráfaga programática), o su primera compra cayó en el mismo segundo que la de 8+ wallets (bundle de snipers / copy-trade). Si la mayoría de las apariciones de una wallet son bot-like, su score se multiplica ×0.25 — en la práctica los bots desaparecen del top del ranking. En corridas reales esto flaggea ~55% de los pre-buyers.
+**Detección de bots** (`is_bot_suspect`) en dos capas:
+
+1. *Por token* — una aparición es bot-like si tiene ≥2 compras en el mismo segundo, ≥3 compras con dispersión < 90s (ráfaga programática), primera compra en el mismo segundo que 4+ wallets (bundle), o ≥15 compras pre-pump (market maker).
+2. *Flotas (cross-token)* — `findFleetBots`: si ≥3 wallets debutan en el **mismo segundo exacto** de un token es un bundle coordinado; una wallet que aparece en bundles así en ≥2 tokens distintos es parte de una flota operada por una sola entidad. Esto caza bots sofisticados que espacian compras para evadir los filtros por-token. Se calcula sobre toda la DB sin tocar APIs.
+
+Si una wallet cae en cualquiera de las dos capas, su score se multiplica ×0.15 y desaparece del top. El panel oculta bots/snipers por default.
 
 ## Arquitectura
 
@@ -91,7 +96,7 @@ Con `RUN_INTERVAL_HOURS` el pipeline corre solo; el histórico (SQLite) y los CS
 
 ## Límites conocidos del free tier
 
-- **Etherscan free ya NO soporta BSC** (`chainid=56` → "Free API access is not supported for this chain"). El código queda listo por si se paga el plan; con key gratis solo Ethereum. Límite: 5 req/s, 100k req/día (limiter global incluido).
+- **Chains EVM soportadas en el free tier de Etherscan V2** (probado): Ethereum, Polygon y Arbitrum ✅. NO soporta BSC, Base, Optimism ni Avalanche (`chainid` → "Free API access is not supported for this chain") — el código queda listo por si se paga el plan; esas chains se detectan como candidatas vía GeckoTerminal pero el análisis de wallets se saltea. Límite: 5 req/s, 100k req/día (limiter global incluido).
 - **DexScreener** no tiene endpoint de "top pares"; los candidatos salen de token-boosts/profiles + búsquedas, complementados con **GeckoTerminal** (trending + new pools por chain, sin key, ~30 req/min). Con ambas fuentes ETH detecta algo más, pero Solana sigue dominando.
 - **Helius**: por token se recorren las firmas del pool (1000/req) y se parsean máx 5.000 txs priorizando las más viejas (pre-pump). En pools muy calientes (50k+ txs en la ventana) la cola post-pump se trunca; un token muy explosivo puede quedar con pre-buyers incompletos (~2 min por token hot).
 

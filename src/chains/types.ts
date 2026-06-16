@@ -1,4 +1,4 @@
-export type Chain = "eth" | "bsc" | "sol";
+export type Chain = "eth" | "bsc" | "sol" | "polygon" | "arbitrum";
 
 export interface TokenTransfer {
   txHash: string;

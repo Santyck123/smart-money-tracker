@@ -8,7 +8,7 @@ import { SolanaAdapter } from "../chains/solana.adapter.js";
 import type { Chain } from "../chains/types.js";
 import { listAllWalletStats, listPumpEvents, type WalletStatsRow } from "../storage/db.js";
 import { computeFlags, type WalletFlags } from "../analysis/filters.js";
-import { scoreWallet } from "../analysis/scoring.js";
+import { findFleetBots, scoreWallet } from "../analysis/scoring.js";
 
 /**
  * Export final: agrega wallet_stats por wallet, scorea, enriquece flags para
@@ -23,6 +23,8 @@ const EXPLORER_URL: Record<Chain, (wallet: string) => string> = {
   eth: (w) => `https://etherscan.io/address/${w}`,
   bsc: (w) => `https://bscscan.com/address/${w}`,
   sol: (w) => `https://solscan.io/account/${w}`,
+  polygon: (w) => `https://polygonscan.com/address/${w}`,
+  arbitrum: (w) => `https://arbiscan.io/address/${w}`,
 };
 
 interface RankedWallet {
@@ -53,9 +55,12 @@ export async function runExport(minScore = 0, enrichFlags = true): Promise<strin
     byWallet.set(row.wallet, list);
   }
 
+  const fleet = findFleetBots(allStats);
+
   const ranked: RankedWallet[] = [];
   for (const [wallet, rows] of byWallet) {
     const result = scoreWallet({
+      fleetBot: fleet.has(wallet),
       perToken: rows.map((r) => ({
         hoursBeforePump: r.hoursBeforePump,
         minutesAfterDeploy: r.minutesAfterDeploy,

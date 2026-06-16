@@ -13,7 +13,9 @@ import type { Chain, ChainAdapter, TokenTransfer } from "./types.js";
 
 const ETHERSCAN_V2_BASE = "https://api.etherscan.io/v2/api";
 
-const CHAIN_IDS: Partial<Record<Chain, number>> = { eth: 1, bsc: 56 };
+// Solo chains soportadas por el free tier de Etherscan V2 (probado:
+// eth=1, polygon=137, arbitrum=42161 OK; bsc/base/optimism/avax = pago).
+const CHAIN_IDS: Partial<Record<Chain, number>> = { eth: 1, bsc: 56, polygon: 137, arbitrum: 42161 };
 
 // 5 req/s compartidos: 1 request cada 220ms con margen, sin concurrencia.
 const limiter = new Bottleneck({ minTime: 220, maxConcurrent: 1 });

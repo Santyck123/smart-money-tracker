@@ -19,7 +19,7 @@ export async function runAnalyze(lookbackHours: number): Promise<void> {
   const adapters = new Map<Chain, ChainAdapter>();
   const getAdapter = (chain: Chain): ChainAdapter | undefined => {
     if (adapters.has(chain)) return adapters.get(chain);
-    if (chain === "eth" || chain === "bsc") {
+    if (chain === "eth" || chain === "bsc" || chain === "polygon" || chain === "arbitrum") {
       const adapter = new EvmAdapter(chain, requireEnv("ETHERSCAN_API_KEY"));
       adapters.set(chain, adapter);
       return adapter;

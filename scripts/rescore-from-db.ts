@@ -2,7 +2,7 @@
 // y muestra el ranking de scoring real. Útil tras cambiar la lógica.
 import { listPumpEvents, getTransfersForPump, upsertWalletStats, listAllWalletStats } from "../src/storage/db.js";
 import { buildWalletStatsRows, extractBuys, findPreBuyers } from "../src/analysis/prebuyers.js";
-import { scoreWallet } from "../src/analysis/scoring.js";
+import { findFleetBots, scoreWallet } from "../src/analysis/scoring.js";
 
 const pumps = listPumpEvents();
 for (const pump of pumps) {
@@ -23,9 +23,11 @@ for (const row of all) {
   byWallet.set(row.wallet, list);
 }
 
+const fleet = findFleetBots(all);
 const scored = [...byWallet.entries()].map(([wallet, rows]) => ({
   wallet,
   ...scoreWallet({
+    fleetBot: fleet.has(wallet),
     perToken: rows.map((r) => ({
       hoursBeforePump: r.hoursBeforePump,
       minutesAfterDeploy: r.minutesAfterDeploy,

@@ -5,7 +5,7 @@ import { detectPumps } from "./pumps/detector.js";
 import { insertPumpEvents, listPumpEvents } from "./storage/db.js";
 import type { Chain } from "./chains/types.js";
 
-const VALID_CHAINS: Chain[] = ["eth", "bsc", "sol"];
+const VALID_CHAINS: Chain[] = ["eth", "bsc", "sol", "polygon", "arbitrum"];
 
 function parseChains(value: string): Chain[] {
   const chains = value.split(",").map((c) => c.trim().toLowerCase()) as Chain[];

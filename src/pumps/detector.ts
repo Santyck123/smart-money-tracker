@@ -22,11 +22,15 @@ const CHAIN_ID_MAP: Record<Chain, string> = {
   eth: "ethereum",
   bsc: "bsc",
   sol: "solana",
+  polygon: "polygon",
+  arbitrum: "arbitrum",
 };
 const REVERSE_CHAIN_MAP: Record<string, Chain> = {
   ethereum: "eth",
   bsc: "bsc",
   solana: "sol",
+  polygon: "polygon",
+  arbitrum: "arbitrum",
 };
 
 const pairSchema = z.object({
@@ -142,7 +146,9 @@ async function fetchSearchCandidates(chains: Chain[]): Promise<DexPair[]> {
 
 // ---- GeckoTerminal (sin key, ~30 req/min): segunda fuente de candidatos ----
 const GECKO_BASE = "https://api.geckoterminal.com/api/v2";
-const GECKO_NETWORK_MAP: Record<Chain, string> = { eth: "eth", bsc: "bsc", sol: "solana" };
+const GECKO_NETWORK_MAP: Record<Chain, string> = {
+  eth: "eth", bsc: "bsc", sol: "solana", polygon: "polygon_pos", arbitrum: "arbitrum",
+};
 
 const geckoPoolSchema = z.object({
   attributes: z.object({
@@ -180,21 +186,36 @@ function geckoPoolToPair(raw: unknown, chain: Chain): DexPair | null {
   };
 }
 
-/** Trending + new pools de GeckoTerminal por chain. */
+/** GeckoTerminal free tier: ~30 req/min → throttle ~2.2s entre llamadas. */
+const GECKO_THROTTLE_MS = 2200;
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Trending + new pools de GeckoTerminal por chain, con reintento ante 429. */
 async function fetchGeckoCandidates(chains: Chain[]): Promise<DexPair[]> {
   const pairs: DexPair[] = [];
+  let first = true;
   for (const chain of chains) {
     const network = GECKO_NETWORK_MAP[chain];
-    for (const endpoint of [`trending_pools`, `new_pools`]) {
-      try {
-        const data = await fetchJson(`${GECKO_BASE}/networks/${network}/${endpoint}?page=1`);
-        const body = z.object({ data: z.array(z.unknown()) }).parse(data);
-        for (const raw of body.data) {
-          const pair = geckoPoolToPair(raw, chain);
-          if (pair) pairs.push(pair);
+    for (const endpoint of ["trending_pools", "new_pools"]) {
+      if (!first) await sleep(GECKO_THROTTLE_MS);
+      first = false;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const data = await fetchJson(`${GECKO_BASE}/networks/${network}/${endpoint}?page=1`);
+          const body = z.object({ data: z.array(z.unknown()) }).parse(data);
+          for (const raw of body.data) {
+            const pair = geckoPoolToPair(raw, chain);
+            if (pair) pairs.push(pair);
+          }
+          break;
+        } catch (err) {
+          if (attempt === 0 && /429/.test(String(err))) {
+            await sleep(GECKO_THROTTLE_MS * 2); // backoff y reintento único
+            continue;
+          }
+          logger.warn({ err: String(err), chain, endpoint }, "fallo fuente GeckoTerminal, continúo");
+          break;
         }
-      } catch (err) {
-        logger.warn({ err: String(err), chain, endpoint }, "fallo fuente GeckoTerminal, continúo");
       }
     }
   }

@@ -220,8 +220,10 @@
         <select id="chains">
           <option value="sol" selected>Solana</option>
           <option value="eth">Ethereum</option>
-          <option value="eth,sol">ETH + SOL</option>
-          <option value="eth,bsc,sol">ETH + BSC + SOL</option>
+          <option value="polygon">Polygon</option>
+          <option value="arbitrum">Arbitrum</option>
+          <option value="eth,polygon,arbitrum">EVM (ETH+POLY+ARB)</option>
+          <option value="eth,polygon,arbitrum,sol">Todas (multichain)</option>
         </select>
       </div>
       <div><label>Max tokens</label><input id="maxTokens" type="number" value="20" min="1" max="100" /></div>
@@ -333,7 +335,7 @@ async function loadResults() {
     <td class="num">${fmtUsd(p.volume24hUsd)}</td>
     <td class="num">${fmtUsd(p.liquidityUsd)}</td></tr>`).join("");
 
-  const explorer = { sol: "https://solscan.io/account/", eth: "https://etherscan.io/address/", bsc: "https://bscscan.com/address/" };
+  const explorer = { sol: "https://solscan.io/account/", eth: "https://etherscan.io/address/", bsc: "https://bscscan.com/address/", polygon: "https://polygonscan.com/address/", arbitrum: "https://arbiscan.io/address/" };
   const hideBots = $("hideBots").checked;
   const visible = data.wallets.filter((w) => !hideBots || (!w.isBotSuspect && !w.isSniper));
   $("walletsTable").querySelector("tbody").innerHTML = visible.slice(0, 50).map((w) => `

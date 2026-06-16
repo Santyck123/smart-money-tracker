@@ -43,21 +43,66 @@ export interface WalletTokenStats {
   firstBuyClusterSize?: number | undefined;
 }
 
-/** Señales de bot por token:
- *  - ≥3 compras en el mismo segundo (bundler / multi-swap atómico)
- *  - ≥3 compras con dispersión ~nula (ráfaga programática)
- *  - primera compra en el mismo segundo que ≥8 wallets más (bundle de snipers
- *    o copy-trade masivo: humanos no coordinan al segundo)
+/** Señales de bot por token (umbrales endurecidos):
+ *  - ≥2 compras en el mismo segundo (multi-swap atómico — humano imposible)
+ *  - ≥3 compras con dispersión < 90s (ráfaga programática)
+ *  - primera compra en el mismo segundo que ≥3 wallets más (bundle/copy-trade)
+ *  - ≥15 compras pre-pump (market maker / grid bot)
  */
 export function isBotTokenStats(t: WalletTokenStats): boolean {
-  if ((t.maxBuysPerSecond ?? 0) >= 3) return true;
-  if (t.buyCount >= 3 && t.dispersionHours <= 0.005) return true;
-  if ((t.firstBuyClusterSize ?? 0) >= 8) return true;
+  if ((t.maxBuysPerSecond ?? 0) >= 2) return true;
+  if (t.buyCount >= 3 && t.dispersionHours <= 0.025) return true; // 0.025h = 90s
+  if ((t.firstBuyClusterSize ?? 0) >= 4) return true;
+  if (t.buyCount >= 15) return true;
   return false;
 }
 
-/** Penalización al score total cuando la mayoría de las apariciones son bot-like. */
-const BOT_PENALTY_FACTOR = 0.25;
+/** Penalización al score total cuando la wallet es bot-like. */
+const BOT_PENALTY_FACTOR = 0.15;
+/** Fracción de apariciones bot-like para marcar la wallet como bot. */
+const BOT_APPEARANCE_RATIO = 0.4;
+
+export interface FleetRow {
+  wallet: string;
+  pumpEventId: number;
+  firstBuyTs: number;
+}
+
+/**
+ * Detección de FLOTAS de bots por co-ocurrencia temporal exacta.
+ *
+ * Si ≥3 wallets hacen su primera compra en el MISMO segundo de un token,
+ * eso es un bundle coordinado. Una wallet que aparece en bundles así en ≥2
+ * tokens distintos es parte de una flota operada por una sola entidad —
+ * la señal más fuerte contra bots que espacian compras para evadir los
+ * filtros por-token. Es pura y se calcula sobre toda la DB sin tocar APIs.
+ */
+export function findFleetBots(rows: FleetRow[]): Set<string> {
+  const groups = new Map<string, string[]>();
+  for (const r of rows) {
+    const key = `${r.pumpEventId}:${r.firstBuyTs}`;
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = []));
+    g.push(r.wallet);
+  }
+
+  const bundledTokens = new Map<string, Set<number>>();
+  for (const [key, wallets] of groups) {
+    if (wallets.length < 3) continue; // segundo "concurrido" = bundle
+    const pumpId = Number(key.split(":")[0]);
+    for (const w of wallets) {
+      let toks = bundledTokens.get(w);
+      if (!toks) bundledTokens.set(w, (toks = new Set()));
+      toks.add(pumpId);
+    }
+  }
+
+  const fleet = new Set<string>();
+  for (const [wallet, tokens] of bundledTokens) {
+    if (tokens.size >= 2) fleet.add(wallet);
+  }
+  return fleet;
+}
 
 /** Ventana post-deploy considerada sospechosa de sniper (minutos). */
 export const SNIPER_WINDOW_MINUTES = 5;
@@ -111,6 +156,8 @@ export function recurrenceScore(tokensHitCount: number): number {
 export interface WalletScoreInput {
   /** Stats por token donde la wallet fue pre-buyer (corrida actual + histórico). */
   perToken: WalletTokenStats[];
+  /** true si la wallet pertenece a una flota detectada por findFleetBots. */
+  fleetBot?: boolean | undefined;
 }
 
 export interface WalletScoreResult {
@@ -157,7 +204,7 @@ export function scoreWallet(
   const weightSum = weights.timing + weights.size + weights.accumulation + weights.recurrence;
 
   const botHits = tokens.filter(isBotTokenStats).length;
-  const isBotSuspect = botHits / tokens.length >= 0.5;
+  const isBotSuspect = input.fleetBot === true || botHits / tokens.length >= BOT_APPEARANCE_RATIO;
   const penalty = isBotSuspect ? BOT_PENALTY_FACTOR : 1;
 
   return {

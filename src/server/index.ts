@@ -6,7 +6,7 @@ import path from "node:path";
 import { z } from "zod";
 import { logger } from "../logger.js";
 import { listPumpEvents, listAllWalletStats } from "../storage/db.js";
-import { scoreWallet } from "../analysis/scoring.js";
+import { findFleetBots, scoreWallet } from "../analysis/scoring.js";
 
 /**
  * Panel web local: dispara el pipeline como proceso hijo, streamea sus logs
@@ -28,7 +28,10 @@ const API_TOKEN = process.env.API_TOKEN;
 const RUN_INTERVAL_HOURS = Number(process.env.RUN_INTERVAL_HOURS ?? 0);
 
 const runParamsSchema = z.object({
-  chains: z.string().regex(/^(eth|bsc|sol)(,(eth|bsc|sol))*$/).default("sol"),
+  chains: z
+    .string()
+    .regex(/^(eth|bsc|sol|polygon|arbitrum)(,(eth|bsc|sol|polygon|arbitrum))*$/)
+    .default("sol"),
   maxTokens: z.coerce.number().int().min(1).max(100).default(20),
   minPriceChange: z.coerce.number().positive().default(200),
   minVolume: z.coerce.number().positive().default(100_000),
@@ -175,9 +178,11 @@ app.get("/api/results", (_req: Request, res: Response) => {
     byWallet.set(row.wallet, list);
   }
   const pumpsById = new Map(listPumpEvents().map((p) => [p.id, p]));
+  const fleet = findFleetBots(listAllWalletStats());
   const wallets = [...byWallet.entries()]
     .map(([wallet, rows]) => {
       const s = scoreWallet({
+        fleetBot: fleet.has(wallet),
         perToken: rows.map((r) => ({
           hoursBeforePump: r.hoursBeforePump,
           minutesAfterDeploy: r.minutesAfterDeploy,
